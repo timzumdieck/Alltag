@@ -1,10 +1,17 @@
 import SwiftUI
 import UIKit
+import SwiftData
 
 /// Kopfzeile zum Wechseln des Tages: ‹  Heute / 6. November 2026  ›
 struct DayNavigator: View {
     @Binding var day: DayKey
     @State private var showPicker = false
+    @Query private var vacations: [Vacation]
+
+    // Damit sich die Feiertagsanzeige sofort an geänderte Einstellungen anpasst
+    @AppStorage(Holidays.stateKey) private var holidayState = ""
+    @AppStorage(Holidays.assumptionKey) private var holidayAssumption = true
+    @AppStorage(Holidays.corpusChristiKey) private var holidayCorpus = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -29,6 +36,8 @@ struct DayNavigator: View {
 
                 arrow("chevron.right", label: "Nächster Tag") { day = Day.adding(1, to: day) }
             }
+
+            DayBadges(day: day, vacations: vacations)
 
             if day != Day.today {
                 Button("Zu heute") {
@@ -208,5 +217,47 @@ struct EmptyStateView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
+    }
+}
+
+/// Kleine Hinweise unter dem Datum: Feiertag und Urlaub.
+struct DayBadges: View {
+    let day: DayKey
+    let vacations: [Vacation]
+
+    var body: some View {
+        let holiday = Holidays.name(on: day)
+        let vacation = vacations.first { $0.contains(day) }
+
+        if holiday != nil || vacation != nil {
+            HStack(spacing: 8) {
+                if let holiday {
+                    Badge(text: holiday, symbol: "star", color: Theme.holiday)
+                }
+                if let vacation {
+                    let total = Day.daysBetween(vacation.startDay, vacation.endDay) + 1
+                    let index = Day.daysBetween(vacation.startDay, day) + 1
+                    Badge(text: total > 1 ? "\(vacation.displayTitle) · Tag \(index) von \(total)" : vacation.displayTitle,
+                          symbol: "sun.max",
+                          color: Theme.vacation)
+                }
+            }
+        }
+    }
+}
+
+struct Badge: View {
+    let text: String
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Label(text, systemImage: symbol)
+            .font(.caption.weight(.medium))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(color.opacity(0.12)))
     }
 }

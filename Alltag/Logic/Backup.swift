@@ -66,6 +66,17 @@ struct BackupData: Codable {
     var todos: [TodoDTO]
     var completions: [CompletionDTO]
     var settings: [String: Int]
+    var vacations: [VacationDTO]?
+    var stringSettings: [String: String]?
+
+    struct VacationDTO: Codable {
+        var id: UUID
+        var title: String
+        var startDay: String
+        var endDay: String
+        var pausesTraining: Bool
+        var createdAt: Date
+    }
 }
 
 struct BackupDocument: FileDocument {
@@ -99,6 +110,14 @@ enum BackupService {
         let defaults = UserDefaults.standard
         for key in PrefKey.boolDefaults.keys { settings[key] = defaults.bool(forKey: key) ? 1 : 0 }
         for key in PrefKey.intDefaults.keys { settings[key] = defaults.integer(forKey: key) }
+
+        let vacations = (try? ctx.fetch(FetchDescriptor<Vacation>())) ?? []
+        var vacationDTOs: [BackupData.VacationDTO] = []
+        for v in vacations {
+            vacationDTOs.append(BackupData.VacationDTO(id: v.id, title: v.title, startDay: v.startDay, endDay: v.endDay,
+                                                       pausesTraining: v.pausesTraining, createdAt: v.createdAt))
+        }
+        let stringSettings = [Holidays.stateKey: defaults.string(forKey: Holidays.stateKey) ?? ""]
 
         var exerciseDTOs: [BackupData.ExerciseDTO] = []
         for e in exercises {
@@ -142,7 +161,9 @@ enum BackupService {
                                 sessions: sessionDTOs,
                                 todos: todoDTOs,
                                 completions: completionDTOs,
-                                settings: settings)
+                                settings: settings,
+                                vacations: vacationDTOs,
+                                stringSettings: stringSettings)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -163,6 +184,7 @@ enum BackupService {
         for item in (try? ctx.fetch(FetchDescriptor<WorkoutSession>())) ?? [] { ctx.delete(item) }
         for item in (try? ctx.fetch(FetchDescriptor<WorkoutPlan>())) ?? [] { ctx.delete(item) }
         for item in (try? ctx.fetch(FetchDescriptor<Exercise>())) ?? [] { ctx.delete(item) }
+        for item in (try? ctx.fetch(FetchDescriptor<Vacation>())) ?? [] { ctx.delete(item) }
         try? ctx.save()
 
         for e in backup.exercises {
@@ -202,6 +224,13 @@ enum BackupService {
             } else if PrefKey.intDefaults[key] != nil {
                 defaults.set(value, forKey: key)
             }
+        }
+        for (key, value) in backup.stringSettings ?? [:] where key == Holidays.stateKey {
+            defaults.set(value, forKey: key)
+        }
+        for v in backup.vacations ?? [] {
+            ctx.insert(Vacation(id: v.id, title: v.title, startDay: v.startDay, endDay: v.endDay,
+                                pausesTraining: v.pausesTraining, createdAt: v.createdAt))
         }
 
         ctx.commit()

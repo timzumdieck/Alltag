@@ -241,6 +241,48 @@ final class TodoItem {
 
     /// „Auf den nächsten Tag verschieben“ gilt nur für normale To-Dos.
     var carries: Bool { carryOver && entryKind == .todo }
+
+    /// Einmaliger Eintrag über mehrere Tage (Enddatum nach dem Startdatum):
+    /// Termin = mehrtägig, To-Do = Zeitraum, in dem es erledigt werden soll.
+    var isSpan: Bool {
+        guard repeatKind == .once, let end = endDay else { return false }
+        return end > startDay
+    }
+}
+
+/// Urlaub von … bis (jeweils einschließlich).
+@Model
+final class Vacation {
+    var id: UUID = UUID()
+    var title: String = ""
+    var startDay: String = ""
+    var endDay: String = ""
+    /// Geplante Trainings fallen in dieser Zeit aus.
+    var pausesTraining: Bool = false
+    var createdAt: Date = Date()
+
+    init(id: UUID = UUID(),
+         title: String,
+         startDay: DayKey,
+         endDay: DayKey,
+         pausesTraining: Bool = false,
+         createdAt: Date = Date()) {
+        self.id = id
+        self.title = title
+        self.startDay = startDay
+        self.endDay = endDay
+        self.pausesTraining = pausesTraining
+        self.createdAt = createdAt
+    }
+
+    var displayTitle: String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Urlaub" : trimmed
+    }
+
+    func contains(_ day: DayKey) -> Bool {
+        day >= startDay && day <= endDay
+    }
 }
 
 /// Erledigt-Status eines einzelnen Vorkommens eines To-Dos.
@@ -272,7 +314,8 @@ enum Persistence {
             WorkoutPlan.self,
             WorkoutSession.self,
             TodoItem.self,
-            TodoCompletion.self
+            TodoCompletion.self,
+            Vacation.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, cloudKitDatabase: .none)
         do {

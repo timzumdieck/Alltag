@@ -1,6 +1,39 @@
 import SwiftUI
 import SwiftData
 
+/// Auswahl oben im Editor. „Urlaub“ gibt es nur beim Anlegen.
+enum EditorKind: String, CaseIterable, Identifiable {
+    case todo, appointment, habit, vacation
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .todo: return "To-Do"
+        case .appointment: return "Termin"
+        case .habit: return "Gewohnheit"
+        case .vacation: return "Urlaub"
+        }
+    }
+
+    var entryKind: EntryKind? {
+        switch self {
+        case .todo: return .todo
+        case .appointment: return .appointment
+        case .habit: return .habit
+        case .vacation: return nil
+        }
+    }
+
+    init(_ kind: EntryKind) {
+        switch kind {
+        case .todo: self = .todo
+        case .appointment: self = .appointment
+        case .habit: self = .habit
+        }
+    }
+}
+
 struct TodoEditorView: View {
     let target: TodoEditorTarget
 
@@ -22,6 +55,16 @@ struct TodoEditorView: View {
     @State private var reminderTime: Date
     @State private var reminderOffset: Int?
     @State private var carryOver: Bool
+    @State private var hasEndDate: Bool
+    @State private var endDate: Date
+    @State private var isVacation = false
+    @State private var vacationTitle = ""
+    @State private var vacationStart: Date
+    @State private var vacationEnd: Date
+    @State private var vacationPausesTraining = false
+
+    /// Bei „Genaue Daten“ bleibt ein vorhandenes Enddatum (z. B. aus einer Serien-Teilung) erhalten.
+    private let originalEndDay: DayKey?
 
     private let isNew: Bool
     private let allowsRepeat: Bool
@@ -48,6 +91,11 @@ struct TodoEditorView: View {
             _reminderTime = State(initialValue: Day.date(Day.today, minutes: 9 * 60))
             _reminderOffset = State(initialValue: nil)
             _carryOver = State(initialValue: false)
+            _hasEndDate = State(initialValue: false)
+            _endDate = State(initialValue: Day.noon(Day.adding(7, to: day)))
+            _vacationStart = State(initialValue: Day.noon(day))
+            _vacationEnd = State(initialValue: Day.noon(Day.adding(6, to: day)))
+            originalEndDay = nil
 
         case let .edit(todo, origin, scope):
             isNew = false
@@ -74,6 +122,12 @@ struct TodoEditorView: View {
             _reminderTime = State(initialValue: Day.date(Day.today, minutes: todo.reminderMinutes ?? startMinutes))
             _reminderOffset = State(initialValue: todo.reminderOffset)
             _carryOver = State(initialValue: todo.carryOver)
+            let existingEnd: DayKey? = (scope == .single) ? nil : todo.endDay.flatMap { $0 >= start ? $0 : nil }
+            _hasEndDate = State(initialValue: existingEnd != nil && todo.repeatKind != .dates)
+            _endDate = State(initialValue: Day.noon(existingEnd ?? Day.adding(7, to: start)))
+            _vacationStart = State(initialValue: Day.noon(start))
+            _vacationEnd = State(initialValue: Day.noon(start))
+            originalEndDay = scope == .single ? nil : todo.endDay
         }
     }
 
@@ -83,12 +137,26 @@ struct TodoEditorView: View {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var usesEndDate: Bool {
+        allowsRepeat && repeatKind != .dates && hasEndDate
+    }
+
+    /// Mehrtägiger Termin bzw. To-Do mit Zeitraum
+    private var isMultiDay: Bool {
+        usesEndDate && repeatKind == .once && Day.key(for: endDate) > Day.key(for: date)
+    }
+
+    private var endDateIsInvalid: Bool {
+        usesEndDate && Day.key(for: endDate) < Day.key(for: date)
+    }
+
     private var endIsInvalid: Bool {
-        kind == .appointment && hasTime && hasEnd && Day.minutes(of: endTime) <= Day.minutes(of: time)
+        kind == .appointment && hasTime && hasEnd && !isMultiDay && Day.minutes(of: endTime) <= Day.minutes(of: time)
     }
 
     private var isValid: Bool {
-        guard !trimmedTitle.isEmpty, !endIsInvalid else { return false }
+        if isVacation { return Day.key(for: vacationEnd) >= Day.key(for: vacationStart) }
+        guard !trimmedTitle.isEmpty, !endIsInvalid, !endDateIsInvalid else { return false }
         switch repeatKind {
         case .weekdays: return !weekdays.isEmpty
         case .dates: return !dates.isEmpty
@@ -114,9 +182,9 @@ struct TodoEditorView: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Art", selection: $kind.animation()) {
-                        ForEach(EntryKind.allCases) { entryKind in
-                            Text(entryKind.label).tag(entryKind)
+                    Picker("Art", selection: editorKind) {
+                        ForEach(isNew ? EditorKind.allCases : EditorKind.allCases.filter { $0 != .vacation }) { option in
+                            Text(option.label).tag(option)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -124,6 +192,12 @@ struct TodoEditorView: View {
                     .listRowInsets(EdgeInsets())
                 }
 
+                if isVacation {
+                    VacationFormSections(title: $vacationTitle,
+                                         start: $vacationStart,
+                                         end: $vacationEnd,
+                                         pausesTraining: $vacationPausesTraining)
+                } else {
                 Section {
                     TextField(titlePlaceholder, text: $title, axis: .vertical)
                     if kind == .appointment {
@@ -161,10 +235,19 @@ struct TodoEditorView: View {
                 if kind == .todo {
                     Section {
                         Toggle("Wenn nicht erledigt, auf den nächsten Tag verschieben", isOn: $carryOver)
+                    } footer: {
+                        if carryOver {
+                            Text("Das To-Do zeigt an, seit wie vielen Tagen es aufgeschoben wird.")
+                        }
                     }
+                }
                 }
             }
             .navigationTitle(isNew ? "Neuer Eintrag" : "\(kind.label) bearbeiten")
+            .onChange(of: date) { _, newDate in
+                // Enddatum mitziehen, damit es nicht vor dem Start liegt
+                if Day.key(for: endDate) < Day.key(for: newDate) { endDate = newDate }
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -191,9 +274,19 @@ struct TodoEditorView: View {
     private var dateSection: some View {
         Section {
             if repeatKind != .dates {
-                DatePicker(repeatKind == .once ? "Datum" : "Beginnt am",
+                DatePicker(repeatKind == .once ? (isMultiDay ? "Beginnt am" : "Datum") : "Beginnt am",
                            selection: $date,
                            displayedComponents: .date)
+
+                if allowsRepeat {
+                    Toggle(endToggleLabel, isOn: $hasEndDate.animation())
+                    if hasEndDate {
+                        DatePicker(endPickerLabel,
+                                   selection: $endDate,
+                                   in: date...,
+                                   displayedComponents: .date)
+                    }
+                }
             }
 
             if kind == .appointment {
@@ -215,8 +308,55 @@ struct TodoEditorView: View {
             if endIsInvalid {
                 Text("Das Ende muss nach dem Beginn liegen.")
                     .foregroundStyle(.red)
+            } else if endDateIsInvalid {
+                Text("Das Enddatum darf nicht vor dem Startdatum liegen.")
+                    .foregroundStyle(.red)
+            } else if usesEndDate, let hint = endDateHint {
+                Text(hint)
             }
         }
+    }
+
+    private var endToggleLabel: String {
+        guard repeatKind == .once else { return "Enddatum" }
+        switch kind {
+        case .appointment: return "Mehrtägig"
+        case .todo, .habit: return "Zeitraum"
+        }
+    }
+
+    private var endPickerLabel: String {
+        guard repeatKind == .once else { return "Wiederholen bis" }
+        switch kind {
+        case .appointment: return "Endet am"
+        case .todo, .habit: return "Erledigen bis"
+        }
+    }
+
+    private var endDateHint: String? {
+        let days = Day.daysBetween(Day.key(for: date), Day.key(for: endDate)) + 1
+        guard repeatKind == .once else { return "Die Wiederholung endet am \(Day.mediumDate(Day.key(for: endDate)))." }
+        guard days > 1 else { return nil }
+        switch kind {
+        case .appointment: return "Der Termin erscheint an \(days) Tagen."
+        case .todo, .habit: return "Das To-Do steht \(days) Tage lang auf deiner Liste, bis du es erledigst."
+        }
+    }
+
+    private var editorKind: Binding<EditorKind> {
+        Binding(
+            get: { isVacation ? .vacation : EditorKind(kind) },
+            set: { newValue in
+                withAnimation {
+                    if let entryKind = newValue.entryKind {
+                        isVacation = false
+                        kind = entryKind
+                    } else {
+                        isVacation = true
+                    }
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -249,6 +389,18 @@ struct TodoEditorView: View {
     // MARK: - Speichern
 
     private func save() {
+        if isVacation {
+            VacationStore.save(nil,
+                               title: vacationTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                               start: Day.key(for: vacationStart),
+                               end: Day.key(for: vacationEnd),
+                               pausesTraining: vacationPausesTraining,
+                               in: ctx)
+            hapticSuccess()
+            dismiss()
+            return
+        }
+
         let effectiveRepeat: RepeatKind
         if !allowsRepeat {
             effectiveRepeat = .once
@@ -269,7 +421,8 @@ struct TodoEditorView: View {
                               carryOver: carryOver,
                               endMinutes: (hasTime && hasEnd) ? Day.minutes(of: endTime) : nil,
                               reminderOffset: reminderOffset,
-                              location: location)
+                              location: location,
+                              endDay: draftEndDay(for: effectiveRepeat))
 
         switch target.mode {
         case .new:
@@ -279,5 +432,11 @@ struct TodoEditorView: View {
         }
         hapticSuccess()
         dismiss()
+    }
+
+    private func draftEndDay(for repeatKind: RepeatKind) -> DayKey? {
+        guard allowsRepeat else { return nil }
+        if repeatKind == .dates { return originalEndDay }
+        return hasEndDate ? Day.key(for: endDate) : nil
     }
 }

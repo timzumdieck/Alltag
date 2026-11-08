@@ -18,6 +18,22 @@ enum Theme {
         return UIColor(red: 0.42, green: 0.52, blue: 0.66, alpha: 1)
     })
 
+    /// Gedecktes Terrakotta für Feiertage
+    static let holiday = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 0.86, green: 0.55, blue: 0.48, alpha: 1)
+        }
+        return UIColor(red: 0.74, green: 0.38, blue: 0.32, alpha: 1)
+    })
+
+    /// Warmes Sandgelb für Urlaub
+    static let vacation = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor(red: 0.86, green: 0.72, blue: 0.45, alpha: 1)
+        }
+        return UIColor(red: 0.72, green: 0.56, blue: 0.25, alpha: 1)
+    })
+
     static let card = Color(uiColor: .secondarySystemBackground)
     static let field = Color(uiColor: .tertiarySystemFill)
 

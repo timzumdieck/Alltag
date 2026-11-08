@@ -39,6 +39,18 @@ struct TodoRow: Identifiable {
     let location: String
     /// Gewohnheiten: wie oft in Folge erledigt
     let streak: Int
+    /// Tag, an dem die Zeile angezeigt wird
+    let displayDay: DayKey
+    /// Mehrtägige Einträge: erster und letzter Tag
+    let spanStart: DayKey?
+    let spanEnd: DayKey?
+
+    /// Seit wie vielen Tagen ein To-Do aufgeschoben wird.
+    var postponedDays: Int? {
+        guard let from = carriedFrom else { return nil }
+        let days = Day.daysBetween(from, displayDay)
+        return days > 0 ? days : nil
+    }
 
     /// Termine werden nicht abgehakt.
     var isCheckable: Bool { entryKind != .appointment }
@@ -73,6 +85,8 @@ struct Planner {
         let skipped: Set<DayKey>
     }
 
+    private let vacations: [Vacation]
+
     private let todos: [TodoItem]
     private let todoByID: [UUID: TodoItem]
     private let completionByKey: [String: TodoCompletion]
@@ -84,9 +98,11 @@ struct Planner {
          completions: [TodoCompletion],
          plans: [WorkoutPlan],
          sessions: [WorkoutSession],
+         vacations: [Vacation] = [],
          today: DayKey = Day.today) {
         self.today = today
         self.todos = todos
+        self.vacations = vacations.sorted { $0.startDay < $1.startDay }
 
         var byID: [UUID: TodoItem] = [:]
         for todo in todos { byID[todo.id] = todo }
@@ -136,7 +152,18 @@ struct Planner {
     }
 
     private func planOccurs(_ info: PlanInfo, on day: DayKey) -> Bool {
-        !info.skipped.contains(day) && planScheduled(info, on: day)
+        !info.skipped.contains(day) && !trainingPaused(on: day) && planScheduled(info, on: day)
+    }
+
+    // MARK: - Urlaub & Feiertage
+
+    func vacations(on day: DayKey) -> [Vacation] {
+        vacations.filter { $0.contains(day) }
+    }
+
+    /// Trainings fallen wegen Urlaub aus.
+    func trainingPaused(on day: DayKey) -> Bool {
+        vacations.contains { $0.pausesTraining && $0.contains(day) }
     }
 
     /// Laut Plan vorgesehen (ohne Berücksichtigung entfernter Tage).
@@ -177,7 +204,7 @@ struct Planner {
     /// Einheiten, die an diesem Tag geplant wären, aber entfernt wurden.
     func skippedPlans(on day: DayKey) -> [WorkoutPlan] {
         planInfos
-            .filter { $0.skipped.contains(day) && planScheduled($0, on: day) }
+            .filter { $0.skipped.contains(day) && !trainingPaused(on: day) && planScheduled($0, on: day) }
             .map { $0.plan }
     }
 
@@ -193,7 +220,12 @@ struct Planner {
     func todoRows(on day: DayKey, includeTrainings: Bool = true, includeStreaks: Bool = false) -> [TodoRow] {
         var rows: [TodoRow] = []
 
-        for todo in todos where Planner.occurs(todo, on: day) {
+        for todo in todos {
+            if todo.isSpan {
+                if let row = spanRow(todo, on: day, includeStreak: includeStreaks) { rows.append(row) }
+                continue
+            }
+            guard Planner.occurs(todo, on: day) else { continue }
             let completion = todo.entryKind == .appointment ? nil : completionByKey[Planner.key(todo.id, day)]
             if todo.carries {
                 // Ein verschiebbares To-Do steht an genau einem Tag:
@@ -213,13 +245,14 @@ struct Planner {
         for completion in lateDoneByDay[day] ?? [] {
             guard let todo = todoByID[completion.todoID],
                   todo.carries,
+                  !todo.isSpan,
                   Planner.occurs(todo, on: completion.day) else { continue }
             rows.append(makeRow(todo, origin: completion.day, completion: completion, displayDay: day))
         }
 
         // Noch offene, verschobene To-Dos erscheinen heute
         if day == today {
-            for todo in todos where todo.carries {
+            for todo in todos where todo.carries && !todo.isSpan {
                 for origin in openPastOccurrences(of: todo) {
                     rows.append(makeRow(todo, origin: origin, completion: nil, displayDay: day))
                 }
@@ -239,7 +272,10 @@ struct Planner {
                                     entryKind: .todo,
                                     endMinutes: nil,
                                     location: "",
-                                    streak: 0))
+                                    streak: 0,
+                                    displayDay: day,
+                                    spanStart: nil,
+                                    spanEnd: nil))
             }
         }
 
@@ -254,12 +290,16 @@ struct Planner {
         var training = false
         var appointment = false
         var task = false
+        var vacation = false
+        var holiday = false
     }
 
     /// Für die Punkte im Kalender.
     func markers(on day: DayKey) -> DayMarkers {
         var markers = DayMarkers()
         markers.training = hasTraining(on: day)
+        markers.vacation = vacations.contains { $0.contains(day) }
+        markers.holiday = Holidays.name(on: day) != nil
         for row in todoRows(on: day, includeTrainings: false) {
             // Gewohnheiten bekommen keinen Punkt – sonst hätte bei täglichen Gewohnheiten jeder Tag einen.
             switch row.entryKind {
@@ -321,20 +361,77 @@ struct Planner {
         return result
     }
 
-    private func makeRow(_ todo: TodoItem, origin: DayKey, completion: TodoCompletion?, displayDay: DayKey, includeStreak: Bool = false) -> TodoRow {
+    /// Mehrtägiger Eintrag (Termin über mehrere Tage oder To-Do mit Zeitraum).
+    private func spanRow(_ todo: TodoItem, on day: DayKey, includeStreak: Bool) -> TodoRow? {
+        guard let end = todo.endDay else { return nil }
+        let start = todo.startDay
+        let span = (start, end)
+
+        if todo.entryKind == .appointment {
+            guard day >= start && day <= end else { return nil }
+            let startTime: Int? = day == start ? todo.timeMinutes : nil
+            let endTime: Int? = day == end ? todo.endMinutes : nil
+            return buildRow(todo, origin: start, completion: nil, displayDay: day, streak: 0,
+                            timeMinutes: startTime, endMinutes: endTime, carriedFrom: nil, span: span)
+        }
+
+        let completion = completionByKey[Planner.key(todo.id, start)]
+        if let completion {
+            // Erledigt: erscheint nur am Erledigungstag (im Zeitraum bzw. später, wenn verschoben).
+            var shown = max(start, completion.doneDay)
+            if !todo.carries { shown = min(shown, end) }
+            guard shown == day else { return nil }
+            let carried: DayKey? = day > end ? end : nil
+            return buildRow(todo, origin: start, completion: completion, displayDay: day, streak: 0,
+                            timeMinutes: todo.timeMinutes, endMinutes: nil, carriedFrom: carried, span: span)
+        }
+
+        if day >= start && day <= end {
+            return buildRow(todo, origin: start, completion: nil, displayDay: day, streak: 0,
+                            timeMinutes: todo.timeMinutes, endMinutes: nil, carriedFrom: nil, span: span)
+        }
+        if todo.carries && day == today && day > end {
+            return buildRow(todo, origin: start, completion: nil, displayDay: day, streak: 0,
+                            timeMinutes: todo.timeMinutes, endMinutes: nil, carriedFrom: end, span: span)
+        }
+        return nil
+    }
+
+    private func makeRow(_ todo: TodoItem,
+                         origin: DayKey,
+                         completion: TodoCompletion?,
+                         displayDay: DayKey,
+                         includeStreak: Bool = false) -> TodoRow {
         let streak = (includeStreak && todo.entryKind == .habit) ? habitStreak(todo, upTo: displayDay) : 0
-        return TodoRow(id: "todo-\(todo.id.uuidString)-\(origin)",
+        let carried: DayKey? = origin != displayDay ? origin : nil
+        return buildRow(todo, origin: origin, completion: completion, displayDay: displayDay, streak: streak,
+                        timeMinutes: todo.timeMinutes, endMinutes: todo.endMinutes, carriedFrom: carried, span: nil)
+    }
+
+    private func buildRow(_ todo: TodoItem,
+                          origin: DayKey,
+                          completion: TodoCompletion?,
+                          displayDay: DayKey,
+                          streak: Int,
+                          timeMinutes: Int?,
+                          endMinutes: Int?,
+                          carriedFrom: DayKey?,
+                          span: (DayKey, DayKey)?) -> TodoRow {
+        TodoRow(id: "todo-\(todo.id.uuidString)-\(origin)",
                 kind: .todo(todo, origin),
                 title: todo.title,
-                timeMinutes: todo.timeMinutes,
+                timeMinutes: timeMinutes,
                 isDone: completion != nil,
                 doneAt: completion?.completedAt,
-                carriedFrom: origin != displayDay ? origin : nil,
+                carriedFrom: carriedFrom,
                 isRecurring: todo.isRecurring,
                 entryKind: todo.entryKind,
-                endMinutes: todo.endMinutes,
+                endMinutes: endMinutes,
                 location: todo.location,
-                streak: streak)
+                streak: streak,
+                displayDay: displayDay,
+                spanStart: span?.0,
+                spanEnd: span?.1)
     }
 
     static func rowOrder(_ a: TodoRow, _ b: TodoRow) -> Bool {

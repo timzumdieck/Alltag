@@ -22,7 +22,8 @@ enum PrefKey {
     static let quietEnd = "notif.quiet.end"
 
     static let boolDefaults: [String: Bool] = [
-        morningOn: true, trainingOn: true, eveningOn: true, todoOn: true, quietOn: false
+        morningOn: true, trainingOn: true, eveningOn: true, todoOn: true, quietOn: false,
+        Holidays.assumptionKey: true, Holidays.corpusChristiKey: false
     ]
     static let intDefaults: [String: Int] = [
         morningTime: 7 * 60, trainingTime: 17 * 60, eveningTime: 20 * 60,
@@ -33,6 +34,7 @@ enum PrefKey {
         var defaults: [String: Any] = [:]
         for (key, value) in boolDefaults { defaults[key] = value }
         for (key, value) in intDefaults { defaults[key] = value }
+        defaults[Holidays.stateKey] = ""
         UserDefaults.standard.register(defaults: defaults)
     }
 }
@@ -118,6 +120,8 @@ final class NotificationScheduler {
         let completions = (try? ctx.fetch(FetchDescriptor<TodoCompletion>())) ?? []
         let plans = (try? ctx.fetch(FetchDescriptor<WorkoutPlan>())) ?? []
         let sessions = (try? ctx.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        let vacations = (try? ctx.fetch(FetchDescriptor<Vacation>())) ?? []
+        let holidaySettings = Holidays.Settings.current()
 
         let prefs = NotificationPrefs.load()
         let now = Date()
@@ -129,7 +133,8 @@ final class NotificationScheduler {
             let day = Day.adding(offset, to: today)
             let isSummaryDay = offset < daysAhead
             // Planner aus Sicht dieses Tages: offene, verschiebbare To-Dos wandern mit.
-            let planner = Planner(todos: todos, completions: completions, plans: plans, sessions: sessions, today: day)
+            let planner = Planner(todos: todos, completions: completions, plans: plans, sessions: sessions,
+                                  vacations: vacations, today: day)
             let rows = planner.todoRows(on: day)
             let trainings = planner.trainings(on: day)
             let openTasks = rows.filter { $0.entryKind == .todo && !$0.isTraining && !$0.isDone }
@@ -140,6 +145,12 @@ final class NotificationScheduler {
 
             if prefs.morningOn && isSummaryDay {
                 var parts: [String] = []
+                if let holiday = Holidays.name(on: day, settings: holidaySettings) {
+                    parts.append("Feiertag: \(holiday)")
+                }
+                if let vacation = planner.vacations(on: day).first {
+                    parts.append(vacation.displayTitle)
+                }
                 let names = trainings.map { $0.name }
                 if !names.isEmpty {
                     parts.append("Training: " + names.joined(separator: ", "))

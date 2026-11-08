@@ -27,7 +27,9 @@ struct TodoTab: View {
     @Query private var completions: [TodoCompletion]
     @Query private var plans: [WorkoutPlan]
     @Query private var sessions: [WorkoutSession]
+    @Query private var vacations: [Vacation]
 
+    @State private var editingVacation: Vacation?
     @State private var editorTarget: TodoEditorTarget?
     @State private var seriesAction: SeriesAction?
     @State private var skipSlot: TrainingSlot?
@@ -35,8 +37,9 @@ struct TodoTab: View {
 
     var body: some View {
         @Bindable var app = app
-        let planner = Planner(todos: todos, completions: completions, plans: plans, sessions: sessions)
+        let planner = Planner(todos: todos, completions: completions, plans: plans, sessions: sessions, vacations: vacations)
         let rows = planner.todoRows(on: app.todoDay, includeStreaks: true)
+        let dayVacations = planner.vacations(on: app.todoDay)
         let appointments = rows
             .filter { $0.entryKind == .appointment }
             .sorted { ($0.timeMinutes ?? -1) < ($1.timeMinutes ?? -1) }
@@ -60,6 +63,15 @@ struct TodoTab: View {
                 }
 
                 List {
+                    if !dayVacations.isEmpty {
+                        Section {
+                            ForEach(dayVacations) { vacation in
+                                VacationRow(vacation: vacation, day: app.todoDay)
+                                    .onTapGesture { editingVacation = vacation }
+                                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                            }
+                        }
+                    }
                     section(.appointment, rows: appointments)
                     section(.todo, rows: tasks)
                     section(.habit, rows: habits)
@@ -67,7 +79,7 @@ struct TodoTab: View {
                 .listStyle(.plain)
                 .animation(.spring(response: 0.45, dampingFraction: 0.85), value: rows.map { $0.signature })
                 .overlay {
-                    if rows.isEmpty {
+                    if rows.isEmpty && dayVacations.isEmpty {
                         EmptyStateView(symbol: "checkmark.circle",
                                        title: "Nichts geplant",
                                        message: "Mit „+“ oben rechts legst du ein To-Do, einen Termin oder eine Gewohnheit an.")
@@ -112,6 +124,9 @@ struct TodoTab: View {
             }
             .sheet(item: $editorTarget) { target in
                 TodoEditorView(target: target)
+            }
+            .sheet(item: $editingVacation) { vacation in
+                VacationEditorView(vacation: vacation)
             }
             .confirmationDialog(seriesAction?.isDelete == true ? "Wiederkehrenden Eintrag löschen" : "Wiederkehrenden Eintrag bearbeiten",
                                 isPresented: Binding(get: { seriesAction != nil }, set: { if !$0 { seriesAction = nil } }),
@@ -233,7 +248,7 @@ struct TodoTab: View {
         }
         haptic(.light)
         if let ref = row.todoRef {
-            TodoStore.toggle(ref.todo, origin: ref.origin, in: ctx)
+            TodoStore.toggle(ref.todo, origin: ref.origin, displayDay: row.displayDay, in: ctx)
         } else if let slot = row.trainingSlot {
             TrainingStore.toggle(slot, in: ctx)
         }
@@ -281,6 +296,12 @@ struct TodoRowView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
+                } else if let end = row.endMinutes {
+                    Text("bis")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(Day.timeString(end))
+                        .font(.subheadline.weight(.medium).monospacedDigit())
                 } else {
                     Text("ganztägig")
                         .font(.caption)
@@ -296,8 +317,11 @@ struct TodoRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.title)
                     .font(.body)
-                if !row.location.isEmpty || row.isRecurring {
+                if !row.location.isEmpty || row.isRecurring || row.spanStart != nil {
                     HStack(spacing: 10) {
+                        if let spanText = appointmentSpanText {
+                            Label(spanText, systemImage: "arrow.left.and.right")
+                        }
                         if !row.location.isEmpty {
                             Label(row.location, systemImage: "mappin")
                         }
@@ -339,8 +363,12 @@ struct TodoRowView: View {
                         if let minutes = row.timeMinutes {
                             Label(Day.timeString(minutes), systemImage: "clock")
                         }
-                        if let from = row.carriedFrom {
-                            Label("von \(Day.shortDate(from))", systemImage: "arrow.turn.down.right")
+                        if let days = row.postponedDays {
+                            Label(postponedText(days), systemImage: "arrow.turn.down.right")
+                                .foregroundStyle(days >= 3 && !row.isDone ? Theme.holiday : Color.secondary)
+                        }
+                        if let periodText = todoPeriodText {
+                            Label(periodText, systemImage: "calendar.badge.clock")
                         }
                         if row.entryKind == .habit && row.streak >= 2 {
                             Label("\(row.streak)× in Folge", systemImage: "flame")
@@ -362,10 +390,37 @@ struct TodoRowView: View {
         .opacity(row.isDone ? 0.65 : 1)
     }
 
+    /// „seit 3 Tagen aufgeschoben“ bzw. nach dem Abhaken „3 Tage aufgeschoben“
+    private func postponedText(_ days: Int) -> String {
+        let dayText = days == 1 ? "1 Tag" : "\(days) Tagen"
+        if row.isDone {
+            return days == 1 ? "1 Tag aufgeschoben" : "\(days) Tage aufgeschoben"
+        }
+        return "seit \(dayText) aufgeschoben"
+    }
+
+    /// Mehrtägiger Termin: „Tag 2 von 3“
+    private var appointmentSpanText: String? {
+        guard let start = row.spanStart, let end = row.spanEnd else { return nil }
+        let total = Day.daysBetween(start, end) + 1
+        let index = Day.daysBetween(start, row.displayDay) + 1
+        return "Tag \(index) von \(total)"
+    }
+
+    /// To-Do mit Zeitraum: „bis Fr., 13. Nov.“ bzw. „nur noch heute“
+    private var todoPeriodText: String? {
+        guard let end = row.spanEnd, !row.isDone, row.carriedFrom == nil else { return nil }
+        let remaining = Day.daysBetween(row.displayDay, end)
+        if remaining == 0 { return "letzter Tag" }
+        if remaining == 1 { return "bis morgen" }
+        return "bis \(Day.shortDate(end))"
+    }
+
     private var hasDetails: Bool {
         row.isTraining
             || row.timeMinutes != nil
-            || row.carriedFrom != nil
+            || row.postponedDays != nil
+            || todoPeriodText != nil
             || (row.entryKind == .habit && row.streak >= 2)
             || (row.entryKind == .todo && row.isRecurring)
     }

@@ -11,6 +11,7 @@ struct TrainingTab: View {
     @Environment(\.modelContext) private var ctx
     @Query(sort: \WorkoutPlan.createdAt) private var plans: [WorkoutPlan]
     @Query private var sessions: [WorkoutSession]
+    @Query private var vacations: [Vacation]
 
     @State private var selectedSlotID: String?
     @State private var showNewPlan = false
@@ -18,7 +19,7 @@ struct TrainingTab: View {
 
     var body: some View {
         @Bindable var app = app
-        let planner = Planner(todos: [], completions: [], plans: plans, sessions: sessions)
+        let planner = Planner(todos: [], completions: [], plans: plans, sessions: sessions, vacations: vacations)
         let slots = planner.trainings(on: app.trainingDay)
 
         NavigationStack {
@@ -134,11 +135,20 @@ struct TrainingTab: View {
         )
     }
 
+    private var emptyMessage: String? {
+        if plans.isEmpty { return "Lege zuerst mit „+“ oben rechts eine Trainingseinheit an." }
+        let day = app.trainingDay
+        if vacations.contains(where: { $0.pausesTraining && $0.contains(day) }) {
+            return "Im Urlaub sind deine geplanten Trainings pausiert."
+        }
+        return nil
+    }
+
     private var emptyState: some View {
         VStack(spacing: 18) {
             EmptyStateView(symbol: "figure.strengthtraining.traditional",
                            title: app.trainingDay == Day.today ? "Heute kein Training" : "Kein Training geplant",
-                           message: plans.isEmpty ? "Lege zuerst mit „+“ oben rechts eine Trainingseinheit an." : nil)
+                           message: emptyMessage)
 
             Button {
                 if plans.isEmpty { showNewPlan = true } else { showStart = true }

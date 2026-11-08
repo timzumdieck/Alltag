@@ -9,12 +9,18 @@ struct CalendarTab: View {
     @Query private var completions: [TodoCompletion]
     @Query private var plans: [WorkoutPlan]
     @Query private var sessions: [WorkoutSession]
+    @Query private var vacations: [Vacation]
+
+    // Neu zeichnen, wenn sich die Feiertags-Einstellungen ändern
+    @AppStorage(Holidays.stateKey) private var holidayState = ""
+    @AppStorage(Holidays.assumptionKey) private var holidayAssumption = true
+    @AppStorage(Holidays.corpusChristiKey) private var holidayCorpus = false
 
     @State private var forward = true
     @State private var popupDay: DayKey?
 
     var body: some View {
-        let planner = Planner(todos: todos, completions: completions, plans: plans, sessions: sessions)
+        let planner = Planner(todos: todos, completions: completions, plans: plans, sessions: sessions, vacations: vacations)
 
         NavigationStack {
             VStack(spacing: 0) {
@@ -196,12 +202,20 @@ struct DayCell: View {
     private var textColor: Color {
         if isSelected { return isToday ? .white : Color(uiColor: .systemBackground) }
         if isToday { return Theme.accent }
+        if markers.holiday { return Theme.holiday }
         return isWeekend ? .secondary : .primary
     }
 
     private var circleColor: Color {
         if isSelected { return isToday ? Theme.accent : .primary }
         return .clear
+    }
+
+    private var accessibilityText: String {
+        var parts = [Day.fullDate(day)]
+        if let holiday = Holidays.name(on: day) { parts.append("Feiertag \(holiday)") }
+        if markers.vacation { parts.append("Urlaub") }
+        return parts.joined(separator: ", ")
     }
 
     var body: some View {
@@ -211,6 +225,13 @@ struct DayCell: View {
                 .foregroundStyle(textColor)
                 .frame(width: 36, height: 36)
                 .background(Circle().fill(circleColor))
+                .frame(maxWidth: .infinity)
+                .background(
+                    // Urlaub: durchgehendes Band hinter den Tagen
+                    Rectangle()
+                        .fill(markers.vacation ? Theme.vacation.opacity(0.16) : Color.clear)
+                        .frame(height: 30)
+                )
 
             HStack(spacing: 3) {
                 if markers.training {
@@ -229,7 +250,7 @@ struct DayCell: View {
         .frame(height: DayCell.height)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Day.fullDate(day))
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
@@ -253,12 +274,26 @@ struct DayAgendaView: View {
 
     var body: some View {
         let rows = sortedRows
+        let holiday = Holidays.name(on: day)
+        let dayVacations = planner.vacations(on: day)
 
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(Day.fullDate(day))
                     .font(.headline)
                     .padding(.bottom, 8)
+
+                if holiday != nil || !dayVacations.isEmpty {
+                    HStack(spacing: 8) {
+                        if let holiday {
+                            Badge(text: holiday, symbol: "star", color: Theme.holiday)
+                        }
+                        ForEach(dayVacations) { vacation in
+                            Badge(text: vacation.displayTitle, symbol: "sun.max", color: Theme.vacation)
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
 
                 if rows.isEmpty {
                     Text("Keine Einträge")

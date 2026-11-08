@@ -31,9 +31,18 @@ struct SettingsView: View {
     @State private var importCandidate: BackupData?
     @State private var message: String?
 
+    @AppStorage(Holidays.stateKey) private var holidayState = ""
+    @AppStorage(Holidays.assumptionKey) private var holidayAssumption = true
+    @AppStorage(Holidays.corpusChristiKey) private var holidayCorpus = false
+
+    @Query private var vacations: [Vacation]
+    @State private var editingVacation: Vacation?
+    @State private var showNewVacation = false
+
     private var prefsSignature: String {
         [morningOn, trainingOn, eveningOn, todoOn, quietOn].map { $0 ? "1" : "0" }.joined()
             + "|\(morningTime)|\(trainingTime)|\(eveningTime)|\(quietStart)|\(quietEnd)"
+            + "|\(holidayState)|\(holidayAssumption)|\(holidayCorpus)"
     }
 
     var body: some View {
@@ -72,6 +81,10 @@ struct SettingsView: View {
                     Text("Mitteilungen, die in die Ruhezeit fallen, werden nicht zugestellt.")
                 }
 
+                holidaySection
+
+                vacationSection
+
                 backupSection
 
                 Section {
@@ -109,6 +122,70 @@ struct SettingsView: View {
     }
 
     // MARK: - Abschnitte
+
+    private var holidaySection: some View {
+        Section {
+            Picker("Bundesland", selection: $holidayState) {
+                Text("Nur bundesweite").tag("")
+                ForEach(Bundesland.sortedByName) { state in
+                    Text(state.name).tag(state.rawValue)
+                }
+            }
+            if holidayState == Bundesland.by.rawValue {
+                Toggle("Mariä Himmelfahrt (15. August)", isOn: $holidayAssumption)
+            }
+            if holidayState == Bundesland.sn.rawValue || holidayState == Bundesland.th.rawValue {
+                Toggle("Fronleichnam", isOn: $holidayCorpus)
+            }
+        } header: {
+            Text("Feiertage")
+        } footer: {
+            Text(holidayFooter)
+        }
+    }
+
+    private var holidayFooter: String {
+        var text = "Im Kalender werden die gesetzlichen Feiertage des Bundeslandes angezeigt, in dem du arbeitest."
+        if holidayState == Bundesland.by.rawValue {
+            text += " Mariä Himmelfahrt ist nur in Gemeinden mit überwiegend katholischer Bevölkerung frei."
+        } else if holidayState == Bundesland.sn.rawValue || holidayState == Bundesland.th.rawValue {
+            text += " Fronleichnam ist nur in einigen Gemeinden ein Feiertag – schalte es ein, wenn es bei dir gilt."
+        }
+        return text
+    }
+
+    private var vacationSection: some View {
+        let today = Day.today
+        let upcoming = vacations
+            .filter { $0.endDay >= today }
+            .sorted { $0.startDay < $1.startDay }
+
+        return Section {
+            ForEach(upcoming) { vacation in
+                Button {
+                    editingVacation = vacation
+                } label: {
+                    VacationRow(vacation: vacation)
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                showNewVacation = true
+            } label: {
+                Label("Urlaub eintragen", systemImage: "plus")
+            }
+        } header: {
+            Text("Urlaub")
+        } footer: {
+            Text("Urlaub erscheint im Kalender und bei den To-Dos. Du kannst ihn auch über „+“ im To-Do-Tab eintragen.")
+        }
+        .sheet(item: $editingVacation) { vacation in
+            VacationEditorView(vacation: vacation)
+        }
+        .sheet(isPresented: $showNewVacation) {
+            VacationEditorView(vacation: nil)
+        }
+    }
 
     private var permissionSection: some View {
         Section {

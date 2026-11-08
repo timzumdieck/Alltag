@@ -29,6 +29,8 @@ struct TodoDraft {
     var endMinutes: Int?
     var reminderOffset: Int?
     var location: String
+    /// Enddatum: bei Wiederholungen „wiederholen bis“, bei einmaligen Einträgen Ende des Zeitraums.
+    var endDay: DayKey?
 }
 
 enum EditScope {
@@ -44,10 +46,11 @@ enum TodoStore {
         return all.filter { $0.todoID == todoID }
     }
 
-    static func toggle(_ todo: TodoItem, origin: DayKey, in ctx: ModelContext) {
+    /// `displayDay` = Tag, an dem das To-Do abgehakt wurde (wichtig bei verschobenen und mehrtägigen To-Dos).
+    static func toggle(_ todo: TodoItem, origin: DayKey, displayDay: DayKey, in ctx: ModelContext) {
         let existing = completions(of: todo.id, in: ctx).filter { $0.day == origin }
         if existing.isEmpty {
-            let doneDay = todo.carries ? max(origin, Day.today) : origin
+            let doneDay = max(origin, displayDay)
             ctx.insert(TodoCompletion(todoID: todo.id, day: origin, doneDay: doneDay))
         } else {
             for completion in existing { ctx.delete(completion) }
@@ -79,6 +82,14 @@ enum TodoStore {
             todo.startDay = first
         } else {
             todo.startDay = draft.startDay
+        }
+        // Enddatum nur, wenn es nach dem Start liegt (bei genauen Daten ergibt es sich aus den Daten).
+        if draft.repeatKind == .dates {
+            todo.endDay = draft.endDay
+        } else if let end = draft.endDay, end > todo.startDay || (end == todo.startDay && draft.repeatKind != .once) {
+            todo.endDay = end
+        } else {
+            todo.endDay = nil
         }
     }
 
@@ -316,6 +327,30 @@ enum TrainingStore {
             }
             if changed { session.exercises = list }
         }
+        ctx.commit()
+    }
+}
+
+// MARK: - Urlaub
+
+@MainActor
+enum VacationStore {
+    static func save(_ existing: Vacation?, title: String, start: DayKey, end: DayKey, pausesTraining: Bool, in ctx: ModelContext) {
+        let first = min(start, end)
+        let last = max(start, end)
+        if let vacation = existing {
+            vacation.title = title
+            vacation.startDay = first
+            vacation.endDay = last
+            vacation.pausesTraining = pausesTraining
+        } else {
+            ctx.insert(Vacation(title: title, startDay: first, endDay: last, pausesTraining: pausesTraining))
+        }
+        ctx.commit()
+    }
+
+    static func delete(_ vacation: Vacation, in ctx: ModelContext) {
+        ctx.delete(vacation)
         ctx.commit()
     }
 }
