@@ -124,6 +124,7 @@ enum Day {
     private static let fullFormatter = formatter("EEEE, d. MMMM")
     private static let mediumFormatter = formatter("EE, d. MMM yyyy")
     private static let shortFormatter = formatter("EE, d. MMM")
+    private static let tinyFormatter = formatter("d.M.")
     private static let monthFormatter = formatter("MMMM")
     private static let yearFormatter = formatter("yyyy")
 
@@ -136,6 +137,14 @@ enum Day {
         return weekdayFormatter.string(from: noon(key))
     }
 
+    /// "heute", "gestern" oder "Fr., 6. Nov."
+    static func relativeOrShort(_ key: DayKey) -> String {
+        let diff = daysBetween(key, today)
+        if diff == 0 { return "heute" }
+        if diff == 1 { return "gestern" }
+        return shortDate(key)
+    }
+
     /// "6. November 2026"
     static func longDate(_ key: DayKey) -> String { longFormatter.string(from: noon(key)) }
     /// "Freitag, 6. November"
@@ -144,6 +153,8 @@ enum Day {
     static func mediumDate(_ key: DayKey) -> String { mediumFormatter.string(from: noon(key)) }
     /// "Fr., 6. Nov."
     static func shortDate(_ key: DayKey) -> String { shortFormatter.string(from: noon(key)) }
+    /// "6.11."
+    static func tinyDate(_ key: DayKey) -> String { tinyFormatter.string(from: noon(key)) }
     static func monthName(_ key: DayKey) -> String { monthFormatter.string(from: noon(key)) }
     static func yearString(_ key: DayKey) -> String { yearFormatter.string(from: noon(key)) }
 
@@ -171,6 +182,28 @@ enum Fmt {
     /// 80 → "80", 82.5 → "82,5"
     static func weight(_ value: Double) -> String {
         weightFormatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
+    private static let compactFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.locale = Day.locale
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
+        f.maximumFractionDigits = 0
+        return f
+    }()
+
+    /// 12450 → "12.450"
+    static func compact(_ value: Double) -> String {
+        compactFormatter.string(from: NSNumber(value: value.rounded())) ?? String(Int(value))
+    }
+
+    /// Veränderung mit Vorzeichen: "+7,5" / "−2,5" / "±0"
+    static func signed(_ value: Double, compact: Bool = false) -> String {
+        let magnitude = abs(value)
+        let text = compact ? Fmt.compact(magnitude) : weight(magnitude.rounded(toStep: 0.5))
+        if magnitude < 0.05 { return "±0" }
+        return (value > 0 ? "+" : "−") + text
     }
 
     static func parseDouble(_ text: String) -> Double? {

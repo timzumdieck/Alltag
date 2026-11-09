@@ -37,17 +37,21 @@ enum Theme {
     static let card = Color(uiColor: .secondarySystemBackground)
     static let field = Color(uiColor: .tertiarySystemFill)
 
-    /// Gedeckte Farben für Diagrammlinien (je Satz).
-    static let chartPalette: [Color] = [
-        accent,
-        Color(red: 0.42, green: 0.52, blue: 0.66),
-        Color(red: 0.80, green: 0.63, blue: 0.40),
-        Color(red: 0.58, green: 0.58, blue: 0.62),
-        Color(red: 0.66, green: 0.48, blue: 0.58),
-        Color(red: 0.30, green: 0.44, blue: 0.34),
-        Color(red: 0.45, green: 0.66, blue: 0.70),
-        Color(red: 0.72, green: 0.45, blue: 0.40)
-    ]
+    /// Einfarbige Abstufung (Salbei) für Satz 1 … 5+ in gestapelten Balken.
+    /// Hell: Satz 1 am dunkelsten. Dunkel: Satz 1 am hellsten. Beide Reihen sind mit dem
+    /// Palettenprüfer validiert (monotone Helligkeit, sichtbare Stufen, Kontrast zur Kartenfläche).
+    static let setRamp: [Color] = {
+        let light = [0x2C4632, 0x3F6146, 0x557C5C, 0x6F9875, 0x8FB093]
+        let dark = [0xBCD6C0, 0x99BC9E, 0x79A07F, 0x5D8663, 0x4A7050]
+        return zip(light, dark).map { pair in
+            Color(uiColor: UIColor { traits in
+                UIColor(hex: traits.userInterfaceStyle == .dark ? pair.1 : pair.0)
+            })
+        }
+    }()
+
+    /// Zurückhaltendes Grau für Kontext-Markierungen (z. B. alle Sätze hinter der Hauptlinie).
+    static let context = Color(uiColor: .systemGray3)
 }
 
 @MainActor
@@ -72,5 +76,14 @@ extension Binding where Value == Date {
             get: { Day.date(Day.today, minutes: source.wrappedValue) },
             set: { source.wrappedValue = Day.minutes(of: $0) }
         )
+    }
+}
+
+extension UIColor {
+    convenience init(hex: Int) {
+        self.init(red: CGFloat((hex >> 16) & 0xFF) / 255,
+                  green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255,
+                  alpha: 1)
     }
 }
