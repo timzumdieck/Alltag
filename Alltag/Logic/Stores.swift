@@ -75,7 +75,7 @@ enum TodoStore {
         todo.location = isAppointment ? draft.location.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         todo.reminderMinutes = isAppointment ? nil : draft.reminderMinutes
         todo.reminderOffset = isAppointment ? draft.reminderOffset : nil
-        todo.carryOver = draft.kind == .todo && draft.carryOver
+        todo.carryOver = draft.kind != .appointment && draft.carryOver
         todo.weekdays = draft.repeatKind == .weekdays ? draft.weekdays.sorted() : []
         todo.dates = draft.repeatKind == .dates ? Array(Set(draft.dates)).sorted() : []
         if draft.repeatKind == .dates, let first = todo.dates.first {

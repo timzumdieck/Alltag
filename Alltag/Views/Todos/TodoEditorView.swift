@@ -232,12 +232,12 @@ struct TodoEditorView: View {
 
                 reminderSection
 
-                if kind == .todo {
+                if kind != .appointment {
                     Section {
                         Toggle("Wenn nicht erledigt, auf den nächsten Tag verschieben", isOn: $carryOver)
                     } footer: {
                         if carryOver {
-                            Text("Das To-Do zeigt an, seit wie vielen Tagen es aufgeschoben wird.")
+                            Text(carryOverHint)
                         }
                     }
                 }
@@ -315,6 +315,17 @@ struct TodoEditorView: View {
                 Text(hint)
             }
         }
+    }
+
+    private var carryOverHint: String {
+        guard kind == .habit else {
+            return "Das To-Do zeigt an, seit wie vielen Tagen es aufgeschoben wird."
+        }
+        var text = "Verpasste Tage erscheinen am nächsten Tag zum Nachholen, mit Hinweis, seit wie vielen Tagen. Nachgeholte Tage zählen für deine Serie."
+        if repeatKind == .daily {
+            text += " Bei täglichen Gewohnheiten kann so jeder verpasste Tag einzeln auftauchen."
+        }
+        return text
     }
 
     private var endToggleLabel: String {

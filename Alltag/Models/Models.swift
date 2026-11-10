@@ -239,8 +239,8 @@ final class TodoItem {
         set { kindRaw = newValue.rawValue }
     }
 
-    /// „Auf den nächsten Tag verschieben“ gilt nur für normale To-Dos.
-    var carries: Bool { carryOver && entryKind == .todo }
+    /// „Auf den nächsten Tag verschieben“ gilt für To-Dos und Gewohnheiten (nicht für Termine).
+    var carries: Bool { carryOver && entryKind != .appointment }
 
     /// Einmaliger Eintrag über mehrere Tage (Enddatum nach dem Startdatum):
     /// Termin = mehrtägig, To-Do = Zeitraum, in dem es erledigt werden soll.
