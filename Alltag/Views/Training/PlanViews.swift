@@ -14,6 +14,8 @@ struct PlanEditorView: View {
     @State private var entries: [PlanEntry]
     @State private var weekdays: Set<Int>
     @State private var specificDays: [DayKey]
+    @State private var periods: [SchedulePeriod]
+    @State private var editingPeriod: PeriodEditTarget?
     @State private var showPicker = false
     @State private var confirmDelete = false
 
@@ -23,6 +25,7 @@ struct PlanEditorView: View {
         _entries = State(initialValue: plan?.entries ?? [])
         _weekdays = State(initialValue: Set(plan?.currentWeekdays ?? []))
         _specificDays = State(initialValue: plan?.specificDays ?? [])
+        _periods = State(initialValue: (plan?.periods ?? []).sorted { $0.start < $1.start })
     }
 
     private var trimmedName: String {
@@ -72,11 +75,38 @@ struct PlanEditorView: View {
                 Section {
                     WeekdayPicker(selection: $weekdays)
                 } header: {
-                    Text("Wiederkehrende Wochentage")
+                    Text("Jede Woche (dauerhaft)")
                 } footer: {
                     if plan != nil {
                         Text("Änderungen gelten ab heute. Vergangene Trainings bleiben unverändert.")
                     }
+                }
+
+                Section {
+                    ForEach(periods) { period in
+                        Button {
+                            editingPeriod = PeriodEditTarget(period: period, isNew: false)
+                        } label: {
+                            PeriodRow(period: period)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .onDelete { offsets in periods.remove(atOffsets: offsets) }
+
+                    Button {
+                        let start = Day.today
+                        editingPeriod = PeriodEditTarget(
+                            period: SchedulePeriod(start: start,
+                                                   end: Day.adding(55, to: start),
+                                                   weekdays: [Day.weekday(start)]),
+                            isNew: true)
+                    } label: {
+                        Label("Zeitraum hinzufügen", systemImage: "plus")
+                    }
+                } header: {
+                    Text("Zeiträume")
+                } footer: {
+                    Text("Zum Beispiel vom 1. Januar bis 1. März jeden Montag. Gilt zusätzlich zu den dauerhaften Wochentagen.")
                 }
 
                 Section {
@@ -107,12 +137,23 @@ struct PlanEditorView: View {
                                                entries: entries,
                                                weekdays: Array(weekdays),
                                                specificDays: specificDays,
+                                               periods: periods,
                                                in: ctx)
                         hapticSuccess()
                         dismiss()
                     }
                     .fontWeight(.semibold)
                     .disabled(trimmedName.isEmpty)
+                }
+            }
+            .sheet(item: $editingPeriod) { target in
+                PeriodEditorView(target: target) { saved in
+                    if let index = periods.firstIndex(where: { $0.id == saved.id }) {
+                        periods[index] = saved
+                    } else {
+                        periods.append(saved)
+                    }
+                    periods.sort { $0.start < $1.start }
                 }
             }
             .sheet(isPresented: $showPicker) {
@@ -304,5 +345,130 @@ struct PlansListView: View {
         } message: { _ in
             Text("Bereits abgeschlossene Trainings bleiben in der Statistik erhalten.")
         }
+    }
+}
+
+// MARK: - Trainingszeiträume
+
+struct PeriodEditTarget: Identifiable {
+    let period: SchedulePeriod
+    let isNew: Bool
+    var id: UUID { period.id }
+}
+
+struct PeriodRow: View {
+    let period: SchedulePeriod
+
+    var body: some View {
+        let isOver = period.isOver(at: Day.today)
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 18, weight: .light))
+                .foregroundStyle(isOver ? Color.secondary : Theme.accent)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(period.weekdayText)
+                    .foregroundStyle(.primary)
+                Text(isOver ? "\(period.rangeText) · beendet" : period.rangeText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+}
+
+struct PeriodEditorView: View {
+    let target: PeriodEditTarget
+    let onSave: (SchedulePeriod) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var weekdays: Set<Int>
+    @State private var start: Date
+    @State private var hasEnd: Bool
+    @State private var end: Date
+
+    init(target: PeriodEditTarget, onSave: @escaping (SchedulePeriod) -> Void) {
+        self.target = target
+        self.onSave = onSave
+        _weekdays = State(initialValue: Set(target.period.weekdays))
+        _start = State(initialValue: Day.noon(target.period.start))
+        _hasEnd = State(initialValue: target.period.end != nil)
+        _end = State(initialValue: Day.noon(target.period.end ?? Day.adding(55, to: target.period.start)))
+    }
+
+    private var startKey: DayKey { Day.key(for: start) }
+    private var endKey: DayKey { Day.key(for: end) }
+
+    private var isValid: Bool {
+        !weekdays.isEmpty && (!hasEnd || endKey >= startKey)
+    }
+
+    /// Anzahl der Trainingstage im Zeitraum (nur mit Enddatum)
+    private var trainingCount: Int? {
+        guard hasEnd, endKey >= startKey else { return nil }
+        var count = 0
+        var day = startKey
+        var steps = 0
+        while day <= endKey && steps < 1_000 {
+            if weekdays.contains(Day.weekday(day)) { count += 1 }
+            day = Day.adding(1, to: day)
+            steps += 1
+        }
+        return count
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    WeekdayPicker(selection: $weekdays)
+                } header: {
+                    Text("Wochentage")
+                }
+
+                Section {
+                    DatePicker("Von", selection: $start, displayedComponents: .date)
+                    Toggle("Enddatum", isOn: $hasEnd.animation())
+                    if hasEnd {
+                        DatePicker("Bis", selection: $end, in: start..., displayedComponents: .date)
+                    }
+                } header: {
+                    Text("Zeitraum")
+                } footer: {
+                    if let count = trainingCount {
+                        Text(count == 1 ? "1 Training in diesem Zeitraum." : "\(count) Trainings in diesem Zeitraum.")
+                    } else if !hasEnd {
+                        Text("Ohne Enddatum gilt der Zeitraum ab dem Starttag dauerhaft.")
+                    }
+                }
+            }
+            .onChange(of: start) { _, newStart in
+                if Day.key(for: end) < Day.key(for: newStart) { end = newStart }
+            }
+            .navigationTitle(target.isNew ? "Neuer Zeitraum" : "Zeitraum bearbeiten")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(target.isNew ? "Hinzufügen" : "Übernehmen") {
+                        var period = target.period
+                        period.weekdays = Array(weekdays).sorted()
+                        period.start = startKey
+                        period.end = hasEnd ? endKey : nil
+                        onSave(period)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!isValid)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

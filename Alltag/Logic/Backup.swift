@@ -18,6 +18,7 @@ struct BackupData: Codable {
         var specificDays: [String]
         var createdAt: Date
         var skippedDays: [String]?
+        var periods: [SchedulePeriod]?
     }
 
     struct SessionDTO: Codable {
@@ -128,7 +129,7 @@ enum BackupService {
         for p in plans {
             planDTOs.append(BackupData.PlanDTO(id: p.id, name: p.name, entries: p.entries, rules: p.rules,
                                                specificDays: p.specificDays, createdAt: p.createdAt,
-                                               skippedDays: p.skippedDays))
+                                               skippedDays: p.skippedDays, periods: p.periods))
         }
 
         var sessionDTOs: [BackupData.SessionDTO] = []
@@ -192,7 +193,8 @@ enum BackupService {
         }
         for p in backup.plans {
             ctx.insert(WorkoutPlan(id: p.id, name: p.name, entries: p.entries, rules: p.rules,
-                                   specificDays: p.specificDays, skippedDays: p.skippedDays ?? [], createdAt: p.createdAt))
+                                   specificDays: p.specificDays, skippedDays: p.skippedDays ?? [],
+                                   periods: p.periods ?? [], createdAt: p.createdAt))
         }
         for s in backup.sessions {
             ctx.insert(WorkoutSession(id: s.id, day: s.day, planID: s.planID, planName: s.planName, exercises: s.exercises, isCompleted: s.isCompleted, completedAt: s.completedAt, updatedAt: s.updatedAt))

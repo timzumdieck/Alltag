@@ -23,6 +23,38 @@ struct ScheduleRule: Codable, Hashable {
     var weekdays: [Int]
 }
 
+/// Trainingszeitraum: an bestimmten Wochentagen von … bis (jeweils einschließlich).
+/// Ohne Enddatum gilt er ab dem Starttag dauerhaft.
+struct SchedulePeriod: Codable, Hashable, Identifiable {
+    var id: UUID = UUID()
+    var start: DayKey
+    var end: DayKey?
+    var weekdays: [Int]
+
+    func contains(_ day: DayKey) -> Bool {
+        day >= start && (end.map { day <= $0 } ?? true)
+    }
+
+    func occurs(on day: DayKey) -> Bool {
+        contains(day) && weekdays.contains(Day.weekday(day))
+    }
+
+    /// Endet der Zeitraum vor diesem Tag?
+    func isOver(at day: DayKey) -> Bool {
+        end.map { $0 < day } ?? false
+    }
+
+    var weekdayText: String {
+        let names = Day.weekdayOrder.filter { weekdays.contains($0) }.map { Day.shortWeekdayName($0) }
+        return names.isEmpty ? "Keine Wochentage" : names.joined(separator: ", ")
+    }
+
+    var rangeText: String {
+        guard let end else { return "ab \(Day.mediumDate(start))" }
+        return "\(Day.shortDate(start)) – \(Day.mediumDate(end))"
+    }
+}
+
 /// Ein Satz: Gewicht in kg und Wiederholungen.
 struct SetValue: Codable, Hashable {
     var weight: Double?
@@ -113,6 +145,8 @@ final class WorkoutPlan {
     var specificDays: [String] = []
     /// Tage, an denen diese Einheit ausnahmsweise entfällt.
     var skippedDays: [String] = []
+    /// Zeiträume mit eigenen Wochentagen (z. B. 1.1.–1.3. montags)
+    var periodsData: Data = Data()
     var createdAt: Date = Date()
 
     init(id: UUID = UUID(),
@@ -121,6 +155,7 @@ final class WorkoutPlan {
          rules: [ScheduleRule] = [],
          specificDays: [String] = [],
          skippedDays: [String] = [],
+         periods: [SchedulePeriod] = [],
          createdAt: Date = Date()) {
         self.id = id
         self.name = name
@@ -128,7 +163,13 @@ final class WorkoutPlan {
         self.rulesData = JSONBlob.encode(rules)
         self.specificDays = specificDays
         self.skippedDays = skippedDays
+        self.periodsData = JSONBlob.encode(periods)
         self.createdAt = createdAt
+    }
+
+    var periods: [SchedulePeriod] {
+        get { JSONBlob.decode([SchedulePeriod].self, from: periodsData) ?? [] }
+        set { periodsData = JSONBlob.encode(newValue) }
     }
 
     var entries: [PlanEntry] {
@@ -153,6 +194,9 @@ final class WorkoutPlan {
         let upcoming = specificDays.filter { $0 >= today }.count
         var parts: [String] = []
         if !names.isEmpty { parts.append(names.joined(separator: ", ")) }
+        for period in periods.sorted(by: { $0.start < $1.start }) where !period.isOver(at: today) {
+            parts.append("\(period.weekdayText) \(period.rangeText)")
+        }
         if upcoming > 0 { parts.append(upcoming == 1 ? "1 weiterer Termin" : "\(upcoming) weitere Termine") }
         return parts.isEmpty ? "Keine Trainingstage" : parts.joined(separator: " · ")
     }

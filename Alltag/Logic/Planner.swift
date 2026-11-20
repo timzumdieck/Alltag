@@ -83,6 +83,7 @@ struct Planner {
         let rules: [ScheduleRule]
         let specific: Set<DayKey>
         let skipped: Set<DayKey>
+        let periods: [SchedulePeriod]
     }
 
     private let vacations: [Vacation]
@@ -123,7 +124,8 @@ struct Planner {
             PlanInfo(plan: plan,
                      rules: plan.rules.sorted { $0.validFrom < $1.validFrom },
                      specific: Set(plan.specificDays),
-                     skipped: Set(plan.skippedDays))
+                     skipped: Set(plan.skippedDays),
+                     periods: plan.periods)
         }
 
         var sessionMap: [DayKey: [WorkoutSession]] = [:]
@@ -169,6 +171,7 @@ struct Planner {
     /// Laut Plan vorgesehen (ohne Berücksichtigung entfernter Tage).
     private func planScheduled(_ info: PlanInfo, on day: DayKey) -> Bool {
         if info.specific.contains(day) { return true }
+        if info.periods.contains(where: { $0.occurs(on: day) }) { return true }
         guard let rule = info.rules.last(where: { $0.validFrom <= day }) else { return false }
         return rule.weekdays.contains(Day.weekday(day))
     }

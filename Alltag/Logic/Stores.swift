@@ -263,14 +263,25 @@ enum TrainingStore {
                          entries: [PlanEntry],
                          weekdays: [Int],
                          specificDays: [DayKey],
+                         periods: [SchedulePeriod],
                          in ctx: ModelContext) {
         let today = Day.today
+        let cleanPeriods = periods
+            .filter { !$0.weekdays.isEmpty }
+            .map { period -> SchedulePeriod in
+                var p = period
+                p.weekdays = p.weekdays.sorted()
+                if let end = p.end, end < p.start { p.end = p.start }
+                return p
+            }
+            .sorted { $0.start < $1.start }
         let newWeekdays = weekdays.sorted()
 
         if let plan = existing {
             plan.name = name
             plan.entries = entries
             plan.specificDays = Array(Set(specificDays)).sorted()
+            plan.periods = cleanPeriods
             var rules = plan.rules.sorted { $0.validFrom < $1.validFrom }
             let current = rules.last?.weekdays.sorted() ?? []
             if current != newWeekdays {
@@ -285,7 +296,8 @@ enum TrainingStore {
             let plan = WorkoutPlan(name: name,
                                    entries: entries,
                                    rules: [ScheduleRule(validFrom: today, weekdays: newWeekdays)],
-                                   specificDays: Array(Set(specificDays)).sorted())
+                                   specificDays: Array(Set(specificDays)).sorted(),
+                                   periods: cleanPeriods)
             ctx.insert(plan)
         }
         ctx.commit()
