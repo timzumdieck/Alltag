@@ -49,6 +49,9 @@ struct BackupData: Codable {
         var endMinutes: Int?
         var reminderOffset: Int?
         var location: String?
+        var repeatInterval: Int?
+        var monthlyMode: String?
+        var monthlyDay: Int?
     }
 
     struct CompletionDTO: Codable {
@@ -146,7 +149,9 @@ enum BackupService {
                                                weekdays: t.weekdays, dates: t.dates, exceptions: t.exceptions,
                                                reminderMinutes: t.reminderMinutes, carryOver: t.carryOver,
                                                createdAt: t.createdAt, kind: t.kindRaw, endMinutes: t.endMinutes,
-                                               reminderOffset: t.reminderOffset, location: t.location))
+                                               reminderOffset: t.reminderOffset, location: t.location,
+                                               repeatInterval: t.repeatInterval, monthlyMode: t.monthlyModeRaw,
+                                               monthlyDay: t.monthlyDay))
         }
 
         var completionDTOs: [BackupData.CompletionDTO] = []
@@ -213,6 +218,9 @@ enum BackupService {
             todo.endMinutes = t.endMinutes
             todo.reminderOffset = t.reminderOffset
             todo.location = t.location ?? ""
+            todo.repeatInterval = t.repeatInterval ?? 1
+            todo.monthlyModeRaw = t.monthlyMode ?? MonthlyMode.dayOfMonth.rawValue
+            todo.monthlyDay = t.monthlyDay ?? 0
             ctx.insert(todo)
         }
         for c in backup.completions {

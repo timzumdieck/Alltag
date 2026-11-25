@@ -76,7 +76,7 @@ struct SessionExercise: Codable, Hashable {
 }
 
 enum RepeatKind: String, Codable, CaseIterable, Identifiable {
-    case once, daily, weekdays, dates
+    case once, daily, weekdays, monthly, dates
 
     var id: String { rawValue }
 
@@ -84,10 +84,35 @@ enum RepeatKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .once: return "Einmalig"
         case .daily: return "Täglich"
-        case .weekdays: return "Bestimmte Wochentage"
+        case .weekdays: return "Wöchentlich"
+        case .monthly: return "Monatlich"
         case .dates: return "Genaue Daten"
         }
     }
+
+    /// Unterstützt „alle X Tage/Wochen/Monate“
+    var hasInterval: Bool {
+        self == .daily || self == .weekdays || self == .monthly
+    }
+
+    func intervalLabel(_ n: Int) -> String {
+        switch self {
+        case .daily: return n == 1 ? "Jeden Tag" : "Alle \(n) Tage"
+        case .weekdays: return n == 1 ? "Jede Woche" : "Alle \(n) Wochen"
+        case .monthly: return n == 1 ? "Jeden Monat" : "Alle \(n) Monate"
+        case .once, .dates: return ""
+        }
+    }
+
+    var maxInterval: Int {
+        self == .monthly ? 12 : 6
+    }
+}
+
+/// Monatliche Wiederholung: am gleichen Tag (z. B. am 15.), am n-ten Wochentag (z. B. 2. Mittwoch)
+/// oder am letzten Wochentag des Monats.
+enum MonthlyMode: String, Codable, CaseIterable {
+    case dayOfMonth, weekdayOrdinal, lastWeekday
 }
 
 /// Art eines Eintrags im To-Do-Tab.
@@ -274,6 +299,17 @@ final class TodoItem {
     var repeatKind: RepeatKind {
         get { RepeatKind(rawValue: repeatRaw) ?? .once }
         set { repeatRaw = newValue.rawValue }
+    }
+
+    /// Alle X Tage/Wochen/Monate (1 = jedes Mal)
+    var repeatInterval: Int = 1
+    var monthlyModeRaw: String = "dayOfMonth"
+    /// Tag im Monat bei „am gleichen Tag“ (1–31; in kürzeren Monaten der Monatsletzte)
+    var monthlyDay: Int = 0
+
+    var monthlyMode: MonthlyMode {
+        get { MonthlyMode(rawValue: monthlyModeRaw) ?? .dayOfMonth }
+        set { monthlyModeRaw = newValue.rawValue }
     }
 
     var isRecurring: Bool { repeatKind != .once }

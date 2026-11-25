@@ -78,6 +78,38 @@ enum Day {
         calendar.component(.weekday, from: noon(key))
     }
 
+    /// Montag der Woche
+    static func weekStart(_ key: DayKey) -> DayKey {
+        adding(-((weekday(key) + 5) % 7), to: key)
+    }
+
+    /// Ganze Wochen zwischen den Wochen zweier Tage (Montag als Wochenbeginn)
+    static func weeksBetween(_ from: DayKey, _ to: DayKey) -> Int {
+        let days = daysBetween(weekStart(from), weekStart(to))
+        return Int((Double(days) / 7).rounded(.down))
+    }
+
+    static func monthsBetween(_ from: DayKey, _ to: DayKey) -> Int {
+        let a = components(from)
+        let b = components(to)
+        return (b.year - a.year) * 12 + (b.month - a.month)
+    }
+
+    /// Der wievielte dieses Wochentags im Monat (1–5)
+    static func weekdayOrdinal(_ key: DayKey) -> Int {
+        (components(key).day - 1) / 7 + 1
+    }
+
+    /// Ist es der letzte dieses Wochentags im Monat?
+    static func isLastWeekdayOfMonth(_ key: DayKey) -> Bool {
+        components(key).day + 7 > daysInMonth(key)
+    }
+
+    static func longWeekdayName(_ weekday: Int) -> String {
+        let names = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
+        return names[((weekday - 1) % 7 + 7) % 7]
+    }
+
     // MARK: - Monate
 
     static func firstOfMonth(_ key: DayKey) -> DayKey {

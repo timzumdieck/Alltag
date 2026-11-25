@@ -31,6 +31,9 @@ struct TodoDraft {
     var location: String
     /// Enddatum: bei Wiederholungen „wiederholen bis“, bei einmaligen Einträgen Ende des Zeitraums.
     var endDay: DayKey?
+    var repeatInterval: Int = 1
+    var monthlyMode: MonthlyMode = .dayOfMonth
+    var monthlyDay: Int = 0
 }
 
 enum EditScope {
@@ -78,6 +81,10 @@ enum TodoStore {
         todo.carryOver = draft.kind != .appointment && draft.carryOver
         todo.weekdays = draft.repeatKind == .weekdays ? draft.weekdays.sorted() : []
         todo.dates = draft.repeatKind == .dates ? Array(Set(draft.dates)).sorted() : []
+        todo.repeatInterval = draft.repeatKind.hasInterval ? min(max(1, draft.repeatInterval), draft.repeatKind.maxInterval) : 1
+        todo.monthlyMode = draft.repeatKind == .monthly ? draft.monthlyMode : .dayOfMonth
+        todo.monthlyDay = draft.repeatKind == .monthly && draft.monthlyMode == .dayOfMonth
+            ? min(max(1, draft.monthlyDay), 31) : 0
         if draft.repeatKind == .dates, let first = todo.dates.first {
             todo.startDay = first
         } else {

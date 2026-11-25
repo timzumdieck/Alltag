@@ -49,6 +49,9 @@ struct TodoEditorView: View {
     @State private var hasEnd: Bool
     @State private var endTime: Date
     @State private var repeatKind: RepeatKind
+    @State private var repeatInterval: Int
+    @State private var monthlyMode: MonthlyMode
+    @State private var monthlyDay: Int
     @State private var weekdays: Set<Int>
     @State private var dates: [DayKey]
     @State private var hasReminder: Bool
@@ -85,6 +88,9 @@ struct TodoEditorView: View {
             _hasEnd = State(initialValue: false)
             _endTime = State(initialValue: Day.date(Day.today, minutes: 10 * 60))
             _repeatKind = State(initialValue: .once)
+            _repeatInterval = State(initialValue: 1)
+            _monthlyMode = State(initialValue: .dayOfMonth)
+            _monthlyDay = State(initialValue: Day.components(day).day)
             _weekdays = State(initialValue: [Day.weekday(day)])
             _dates = State(initialValue: [day])
             _hasReminder = State(initialValue: false)
@@ -115,6 +121,9 @@ struct TodoEditorView: View {
             _hasEnd = State(initialValue: todo.endMinutes != nil)
             _endTime = State(initialValue: Day.date(Day.today, minutes: todo.endMinutes ?? min(startMinutes + 60, 23 * 60 + 59)))
             _repeatKind = State(initialValue: scope == .single ? .once : todo.repeatKind)
+            _repeatInterval = State(initialValue: max(1, todo.repeatInterval))
+            _monthlyMode = State(initialValue: todo.monthlyMode)
+            _monthlyDay = State(initialValue: todo.monthlyDay > 0 ? todo.monthlyDay : Day.components(start).day)
             _weekdays = State(initialValue: Set(todo.weekdays.isEmpty ? [Day.weekday(start)] : todo.weekdays))
             let existingDates = scope == .future ? todo.dates.filter { $0 >= origin } : todo.dates
             _dates = State(initialValue: existingDates.isEmpty ? [start] : existingDates)
@@ -160,7 +169,58 @@ struct TodoEditorView: View {
         switch repeatKind {
         case .weekdays: return !weekdays.isEmpty
         case .dates: return !dates.isEmpty
-        case .once, .daily: return true
+        case .once, .daily, .monthly: return true
+        }
+    }
+
+    // MARK: - Wiederholung
+
+    private var startKey: DayKey { Day.key(for: date) }
+
+    private var monthlyOptions: [MonthlyMode] {
+        var options: [MonthlyMode] = [.dayOfMonth]
+        if Day.weekdayOrdinal(startKey) <= 4 { options.append(.weekdayOrdinal) }
+        if Day.isLastWeekdayOfMonth(startKey) { options.append(.lastWeekday) }
+        return options
+    }
+
+    private func monthlyLabel(_ mode: MonthlyMode) -> String {
+        let weekdayName = Day.longWeekdayName(Day.weekday(startKey))
+        switch mode {
+        case .dayOfMonth:
+            return monthlyDay >= 29 ? "Am \(monthlyDay). (sonst Monatsletzter)" : "Am \(monthlyDay)."
+        case .weekdayOrdinal:
+            return "Am \(Day.weekdayOrdinal(startKey)). \(weekdayName)"
+        case .lastWeekday:
+            return "Am letzten \(weekdayName)"
+        }
+    }
+
+    /// Kurzbeschreibung, z. B. „Alle 2 Wochen am Mo, Do“
+    private var repeatSummary: String? {
+        guard repeatKind.hasInterval else { return nil }
+        var text = repeatKind.intervalLabel(repeatInterval)
+        switch repeatKind {
+        case .weekdays:
+            let names = Day.weekdayOrder.filter { weekdays.contains($0) }.map { Day.shortWeekdayName($0) }
+            if !names.isEmpty { text += " am " + names.joined(separator: ", ") }
+        case .monthly:
+            text += " · " + monthlyLabel(monthlyMode).replacingOccurrences(of: "Am ", with: "am ")
+        default:
+            break
+        }
+        return text + ", ab \(Day.mediumDate(startKey))."
+    }
+
+    /// Monatliche Regel an ein geändertes Startdatum anpassen
+    private func syncMonthly(to newDate: Date) {
+        let key = Day.key(for: newDate)
+        monthlyDay = Day.components(key).day
+        if monthlyMode == .lastWeekday && !Day.isLastWeekdayOfMonth(key) {
+            monthlyMode = .weekdayOrdinal
+        }
+        if monthlyMode == .weekdayOrdinal && Day.weekdayOrdinal(key) > 4 {
+            monthlyMode = .lastWeekday
         }
     }
 
@@ -214,11 +274,29 @@ struct TodoEditorView: View {
                                 Text(option.label).tag(option)
                             }
                         }
+                        if repeatKind.hasInterval {
+                            Picker("Intervall", selection: $repeatInterval) {
+                                ForEach(1...repeatKind.maxInterval, id: \.self) { n in
+                                    Text(repeatKind.intervalLabel(n)).tag(n)
+                                }
+                            }
+                        }
                         if repeatKind == .weekdays {
                             WeekdayPicker(selection: $weekdays)
                         }
+                        if repeatKind == .monthly {
+                            Picker("Tag", selection: $monthlyMode) {
+                                ForEach(monthlyOptions, id: \.self) { mode in
+                                    Text(monthlyLabel(mode)).tag(mode)
+                                }
+                            }
+                        }
                     } header: {
                         Text("Wiederholung")
+                    } footer: {
+                        if let summary = repeatSummary {
+                            Text(summary)
+                        }
                     }
 
                     if repeatKind == .dates {
@@ -247,6 +325,7 @@ struct TodoEditorView: View {
             .onChange(of: date) { _, newDate in
                 // Enddatum mitziehen, damit es nicht vor dem Start liegt
                 if Day.key(for: endDate) < Day.key(for: newDate) { endDate = newDate }
+                syncMonthly(to: newDate)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -258,6 +337,9 @@ struct TodoEditorView: View {
                         .fontWeight(.semibold)
                         .disabled(!isValid)
                 }
+            }
+            .onChange(of: repeatKind) { _, newKind in
+                if repeatInterval > newKind.maxInterval { repeatInterval = 1 }
             }
             .onChange(of: kind) { _, newKind in
                 if newKind == .habit && repeatKind == .once {
@@ -433,7 +515,10 @@ struct TodoEditorView: View {
                               endMinutes: (hasTime && hasEnd) ? Day.minutes(of: endTime) : nil,
                               reminderOffset: reminderOffset,
                               location: location,
-                              endDay: draftEndDay(for: effectiveRepeat))
+                              endDay: draftEndDay(for: effectiveRepeat),
+                              repeatInterval: repeatInterval,
+                              monthlyMode: monthlyMode,
+                              monthlyDay: monthlyDay)
 
         switch target.mode {
         case .new:

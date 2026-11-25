@@ -145,11 +145,34 @@ struct Planner {
         guard !todo.startDay.isEmpty, day >= todo.startDay else { return false }
         if let end = todo.endDay, day > end { return false }
         if todo.exceptions.contains(day) { return false }
+        let interval = max(1, todo.repeatInterval)
         switch todo.repeatKind {
-        case .once: return day == todo.startDay
-        case .daily: return true
-        case .weekdays: return todo.weekdays.contains(Day.weekday(day))
-        case .dates: return todo.dates.contains(day)
+        case .once:
+            return day == todo.startDay
+        case .daily:
+            return interval == 1 || Day.daysBetween(todo.startDay, day) % interval == 0
+        case .weekdays:
+            guard todo.weekdays.contains(Day.weekday(day)) else { return false }
+            return interval == 1 || Day.weeksBetween(todo.startDay, day) % interval == 0
+        case .monthly:
+            guard Day.monthsBetween(todo.startDay, day) % interval == 0 else { return false }
+            return matchesMonthly(todo, day)
+        case .dates:
+            return todo.dates.contains(day)
+        }
+    }
+
+    private static func matchesMonthly(_ todo: TodoItem, _ day: DayKey) -> Bool {
+        let start = todo.startDay
+        switch todo.monthlyMode {
+        case .dayOfMonth:
+            let wanted = todo.monthlyDay > 0 ? todo.monthlyDay : Day.components(start).day
+            return Day.components(day).day == min(wanted, Day.daysInMonth(day))
+        case .weekdayOrdinal:
+            return Day.weekday(day) == Day.weekday(start)
+                && Day.weekdayOrdinal(day) == Day.weekdayOrdinal(start)
+        case .lastWeekday:
+            return Day.weekday(day) == Day.weekday(start) && Day.isLastWeekdayOfMonth(day)
         }
     }
 
@@ -352,7 +375,7 @@ struct Planner {
             for day in todo.dates.sorted() where day <= yesterday && isOpen(day) {
                 result.append(day)
             }
-        case .daily, .weekdays:
+        case .daily, .weekdays, .monthly:
             // Höchstens 120 Tage zurückblicken
             var day = max(todo.startDay, Day.adding(-120, to: today))
             let end = min(yesterday, todo.endDay ?? yesterday)
